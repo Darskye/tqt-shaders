@@ -9,13 +9,12 @@
 #define CY     64.0f
 
 // ---------------------------------------------------------------- colour
-// Pixels are stored in the panel's wire byte order (big-endian RGB565) so the
-// DMA path can hand the buffer straight to the SPI engine with no fixups.
-// TFT_eSPI's const pushImageDMA() overload neither clips nor swaps bytes --
-// that is the whole reason this is free.
+// Native RGB565, red in the high bits -- the format TFT_eSPI sprites store and
+// that pushSprite() knows how to send. (An earlier revision pre-swapped these
+// into the panel's wire order for a raw DMA push; moving to sprites for text
+// rendering made that wrong, so the swap is gone.)
 static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
-  uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-  return (uint16_t)((c >> 8) | (c << 8));
+  return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
 // ---------------------------------------------------------------- fast trig

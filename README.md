@@ -1,6 +1,7 @@
 # T-QT Pro shader engine
 
-Per-pixel generative graphics on a LilyGo T-QT Pro (ESP32-S3FN4R2, 0.85" 128x128).
+Per-pixel generative graphics on a LilyGo T-QT Pro (ESP32-S3FN4R2, 0.85" 128x128),
+with time-synced Spotify lyrics drawn over the top in a different style each line.
 
 Measured on hardware:
 
@@ -15,13 +16,65 @@ Frame time is `render + 7.44 ms`. The push cost is flat across every effect
 because it is the SPI transfer, not the shading: 128x128 at 16bpp is 32 KB, and
 at 40 MHz that is ~6.55 ms on the wire plus address-window and loop overhead.
 
+## Lyrics
+
+Two sources, because Spotify has no lyrics API -- their in-app lyrics are
+licensed from Musixmatch and are not exposed:
+
+- **Spotify Web API** (`/v1/me/player/currently-playing`) for the track, artist,
+  album and playback position. Polled every 5s; position is interpolated locally
+  in between so the timing stays tight without hammering the API.
+- **[LRCLIB](https://lrclib.net)** for synced LRC lyrics. Free, no API key,
+  no account. Fetched once per track change.
+
+Unofficial endpoints that scrape Spotify's internal lyrics service with a
+session cookie are deliberately not used: they break their terms, and they break.
+
+TLS is validated against the Arduino core's root CA bundle
+(`setCACertBundle(rootca_crt_bundle_start)`), not `setInsecure()` -- a refresh
+token crosses that connection.
+
+### Styles
+
+At ~16 characters per row there is no room for a lyric sheet, so it shows one
+line at a time and varies the presentation instead. The style is picked
+deterministically from the line index, so it holds steady for that line and
+changes on the next one. Styles that cannot fit fall back rather than overflow.
+
+| style | what it does |
+|---|---|
+| plain | centred, 16px |
+| big | 26px font, short lines only |
+| small | 8px font, left aligned, for long lines |
+| boxed | text on a near-white card |
+| invert | background band dimmed, light text |
+| typewriter | reveals across the line's own duration |
+| slide | enters horizontally, eased |
+| rise | enters from below, eased |
+| word | one word at a time, paced across the line |
+| stagger | wrapped rows offset alternately |
+
+Entry animations are motion and reveal rather than fades: the sprite has no
+alpha blending, and the shader behind it changes every frame anyway.
+
+Without `src/secrets.h` the firmware still builds and runs, showing a demo
+sequence so the styles are visible.
+
 ## Why it's quick
 
 At 128x128 a frame is 32 KB, so **both buffers fit in internal SRAM** — no PSRAM
 staging, which is what throttles per-pixel work on physically larger panels.
 
 Rendering splits across both cores: core 0 does rows 0-63, core 1 does 64-127,
-into the same back buffer. The ranges don't overlap so no locking is needed.
+into the same back sprite. The ranges don't overlap so no locking is needed.
+
+**The sprites must be forced into internal SRAM.** This SDK sets
+`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`, so a 32KB sprite goes to PSRAM by
+default -- costing ~0.4ms per frame of render time alone. TFT_eSPI's
+`setAttribute(PSRAM_ENABLE, false)` does *not* fix this: it only chooses between
+`ps_calloc` and `calloc`, and plain `calloc` lands externally too. The fix is to
+raise the threshold with `heap_caps_malloc_extmem_enable()` across
+`createSprite()` and restore it afterwards, so the TLS stack can still use PSRAM.
 
 Budget for new effects: to hold 60 fps you have `16.7 - 7.4 = 9.3 ms` of render
 time. Metaballs, the heaviest effect here, uses 4.93 ms — so there is roughly 2x
@@ -71,6 +124,20 @@ deliberately in internal SRAM — but the config should match the silicon.
 
     python -m platformio run -t upload
     python -m platformio device monitor
+
+## Connecting Spotify
+
+1. Create an app at https://developer.spotify.com/dashboard and add
+   `http://127.0.0.1:8888/callback` as a Redirect URI.
+2. `python tools/spotify_auth.py` -- authorises in your browser and prints a
+   refresh token. It runs entirely on your machine; nothing is sent anywhere
+   but Spotify, and the token is not written to disk.
+3. `cp src/secrets.h.example src/secrets.h`, fill in WiFi plus the three
+   Spotify values, reflash.
+
+`src/secrets.h` is gitignored and must stay that way -- this repo is public.
+Scopes requested are read-only (`user-read-currently-playing`,
+`user-read-playback-state`).
 
 ## Controls
 
