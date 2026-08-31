@@ -1,1 +1,6 @@
 .pio/
+
+# Never commit real credentials. src/secrets.h is yours alone; the tracked
+# file is secrets.h.example. This repo is public.
+src/secrets.h
+tools/.spotify_token.json
